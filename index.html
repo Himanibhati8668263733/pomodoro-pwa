@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pomodoro Timer</title>
+  <style>
+    /* 
+      Ultra-minimalist styling using system fonts and max 3 colors.
+      Layout is responsive and mobile-first, designed for focus.
+    */
+
+    :root {
+      --bg: #f5fafd; /* Light blue-gray background */
+      --fg: #1e2a38; /* Dark blue-gray text */
+      --accent: #4a90e2; /* Soft blue accent */
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      font-family: system-ui, sans-serif;
+      background-color: var(--bg);
+      color: var(--fg);
+      height: 100%;
+      width: 100%;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    main {
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+
+    .timer {
+      font-size: 4rem;
+      font-weight: bold;
+      margin-bottom: 1rem;
+    }
+
+    .session-type {
+      font-size: 1.25rem;
+      margin-bottom: 0.5rem;
+      color: var(--accent);
+    }
+
+    .session-count {
+      font-size: 0.875rem;
+      margin-bottom: 2rem;
+      color: var(--fg);
+    }
+
+    button {
+      font: inherit;
+      padding: 0.75rem 2rem;
+      border: none;
+      border-radius: 5px;
+      background-color: var(--accent);
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #397ac8;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .settings {
+      font-size: 0.75rem;
+      margin-top: 2rem;
+      color: var(--fg);
+    }
+
+    .settings input {
+      width: 3rem;
+      text-align: center;
+      margin: 0 0.25rem;
+    }
+
+    /* Small screen simulation (CodePen-style view) */
+    .device-frame {
+      max-width: 420px;
+      margin: auto;
+      border: 10px solid #ccc;
+      border-radius: 2rem;
+      padding: 2rem 1rem;
+      background: var(--bg);
+    }
+
+    /* Work/Break mode visual cue via body class */
+    body.break-mode {
+      background-color: #eaf6f9;
+    }
+
+    /* Accessibility: focus style */
+    button:focus,
+    input:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    @media (min-width: 768px) {
+      .timer {
+        font-size: 5rem;
+      }
+    }
+  </style>
+  <link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#4a90e2" />
+</head>
+<body>
+  <div class="device-frame">
+    <main>
+      <div class="session-type" id="sessionType" aria-live="polite">Work</div>
+      <div class="timer" id="timer" role="timer" aria-live="assertive">25:00</div>
+      <div class="session-count" id="sessionCount">0/4 completed</div>
+      <button id="startPauseBtn" aria-label="Start timer">Start</button>
+      <div class="controls">
+        <div class="settings">
+          Work: <input type="number" id="workInput" min="1" max="60" value="25" aria-label="Set work duration (minutes)" />
+          Break: <input type="number" id="breakInput" min="1" max="30" value="5" aria-label="Set break duration (minutes)" />
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <audio id="beep" src="https://www.soundjay.com/buttons/sounds/beep-07.mp3" preload="auto"></audio>
+
+  <script>
+    /**
+     * Pomodoro Timer App
+     * Handles timer countdown, session switching, and persistence
+     */
+
+    const timerEl = document.getElementById('timer');
+    const sessionTypeEl = document.getElementById('sessionType');
+    const sessionCountEl = document.getElementById('sessionCount');
+    const startPauseBtn = document.getElementById('startPauseBtn');
+    const workInput = document.getElementById('workInput');
+    const breakInput = document.getElementById('breakInput');
+    const beepSound = document.getElementById('beep');
+
+    let timer;
+    let isRunning = false;
+    let isWork = true;
+    let workDuration = parseInt(localStorage.getItem('workDuration')) || 25;
+    let breakDuration = parseInt(localStorage.getItem('breakDuration')) || 5;
+    let timeRemaining = workDuration * 60;
+    let completedSessions = parseInt(localStorage.getItem('completedSessions')) || 0;
+
+    workInput.value = workDuration;
+    breakInput.value = breakDuration;
+
+    updateDisplay();
+
+    // Save settings on input change
+    workInput.addEventListener('change', () => {
+      workDuration = Math.max(1, parseInt(workInput.value));
+      localStorage.setItem('workDuration', workDuration);
+      if (!isRunning && isWork) {
+        timeRemaining = workDuration * 60;
+        updateDisplay();
+      }
+    });
+
+    breakInput.addEventListener('change', () => {
+      breakDuration = Math.max(1, parseInt(breakInput.value));
+      localStorage.setItem('breakDuration', breakDuration);
+      if (!isRunning && !isWork) {
+        timeRemaining = breakDuration * 60;
+        updateDisplay();
+      }
+    });
+
+    startPauseBtn.addEventListener('click', () => {
+      if (!isRunning) {
+        startTimer();
+        startPauseBtn.textContent = 'Pause';
+      } else {
+        pauseTimer();
+        startPauseBtn.textContent = 'Start';
+      }
+    });
+
+    /**
+     * Start the countdown timer
+     */
+    function startTimer() {
+      isRunning = true;
+      timer = setInterval(() => {
+        timeRemaining--;
+        if (timeRemaining <= 0) {
+          clearInterval(timer);
+          isRunning = false;
+          handleSessionEnd();
+        }
+        updateDisplay();
+      }, 1000);
+
+      // Haptic feedback if supported
+      if (navigator.vibrate) navigator.vibrate(20);
+    }
+
+    /**
+     * Pause the countdown timer
+     */
+    function pauseTimer() {
+      clearInterval(timer);
+      isRunning = false;
+    }
+
+    /**
+     * Handle end of session and toggle state
+     */
+    function handleSessionEnd() {
+      beepSound.play();
+
+      if (isWork) {
+        completedSessions++;
+        localStorage.setItem('completedSessions', completedSessions);
+      }
+
+      isWork = !isWork;
+      document.body.classList.toggle('break-mode', !isWork);
+      timeRemaining = (isWork ? workDuration : breakDuration) * 60;
+
+      updateDisplay();
+      startPauseBtn.textContent = 'Start';
+    }
+
+    /**
+     * Update timer and session display
+     */
+    function updateDisplay() {
+      const mins = Math.floor(timeRemaining / 60).toString().padStart(2, '0');
+      const secs = (timeRemaining % 60).toString().padStart(2, '0');
+      timerEl.textContent = `${mins}:${secs}`;
+      sessionTypeEl.textContent = isWork ? 'Work' : 'Break';
+      sessionCountEl.textContent = `${completedSessions % 4}/4 completed`;
+    }
+  </script>
+  <script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js')
+        .then(reg => console.log('Service Worker registered', reg))
+        .catch(err => console.error('Service Worker registration failed', err));
+    });
+  }
+</script>
+</body>
+</html>
